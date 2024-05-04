@@ -1,0 +1,81 @@
+name: 'Go Auto Deps Action'
+description: 'Auto package go mod and release for Gentoo overlay use'
+inputs:
+  repo_owner:
+    description: 'upstream repo owner'
+    required: true
+  repo_name:
+    description: 'upstream repo name'
+    required: true
+outputs:
+  do_release:
+    description: 'if new version released'
+    value: ${{ steps.check_release.outputs.do_release }}
+runs:
+  using: "composite"
+  steps:
+    - name: Get Upstream Latest Release
+      uses: actions/github-script@v7
+      id: upstream_release
+      with:
+        result-encoding: string
+        script: |
+          const repo = { owner: '${{ inputs.repo_owner }}', repo: '${{ inputs.repo_name }}' }
+          const response = await github.rest.repos.getLatestRelease(repo)
+          const tag_name = response.data.tag_name
+          console.log(repo, tag_name)
+          return tag_name
+    - name: Get Local Release
+      uses: actions/github-script@v7
+      id: local_release
+      with:
+        result-encoding: string
+        script: |
+          const repo = context.repo;
+          const response = await github.rest.repos.getLatestRelease(repo);
+          const tag_name = response.data.tag_name
+          console.log(repo, tag_name)
+          return tag_name
+    - name: Compare to Check Release
+      id: check_release
+      run: |
+        if [ ${{ steps.upstream_release.outputs.result }} == ${{ steps.local_release.outputs.result }} ]; then
+          echo 'do_release=false' >> $GITHUB_OUTPUT
+        else
+          echo 'do_release=true' >> $GITHUB_OUTPUT
+        fi
+      shell: bash
+    - name: Checkout Upstream
+      id: checkout_upstream
+      if: steps.check_release.outputs.do_release == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: '${{ inputs.repo_owner }}/${{ inputs.repo_name }}'
+        ref: ${{ steps.upstream_release.outputs.result }}
+    - name: Setup Go
+      id: setup_go
+      if: steps.check_release.outputs.do_release == 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+    - name: Download and Package Mods
+      id: download_mods
+      if: steps.check_release.outputs.do_release == 'true'
+      run: |
+        version=${{ steps.upstream_release.outputs.result }}
+        version=${version#v}
+        filename=${{ inputs.repo_name }}-${version}-deps.tar.xz
+        filepath=${HOME}/${filename}
+        GOMODCACHE=${PWD}/go-mod go mod download -modcacherw -x
+        tar --create --auto-compress --file $filepath go-mod
+        echo 'filepath='${filepath} >> $GITHUB_OUTPUT
+      shell: bash
+    - name: Release
+      id: release
+      if: steps.check_release.outputs.do_release == 'true'
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: ${{ steps.download_mods.outputs.filepath }}
+        tag: ${{ steps.upstream_release.outputs.result }}
+        commit: 'master'
+
