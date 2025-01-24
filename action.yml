@@ -32,10 +32,19 @@ runs:
         result-encoding: string
         script: |
           const repo = context.repo;
-          const response = await github.rest.repos.getLatestRelease(repo);
-          const tag_name = response.data.tag_name
-          console.log(repo, tag_name)
-          return tag_name
+          try {
+            const response = await github.rest.repos.getLatestRelease(repo);
+            const tag_name = response.data.tag_name;
+            console.log(repo, tag_name)
+            return tag_name;
+          } catch (error) {
+            if (error.status === 404) {
+              console.log("No local release found");
+              return "";
+            } else {
+              throw error;
+            }
+          }
     - name: Compare to Check Release
       id: check_release
       run: |
